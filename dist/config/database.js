@@ -10,4 +10,4 @@ exports.pool = new pg_1.Pool({
     password: process.env.POSTGRES_PASSWORD,
     port: postgresPort,
 });
-//# sourceMappingURL=db.js.map
+//# sourceMappingURL=database.js.map
