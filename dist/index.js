@@ -8,6 +8,8 @@ const cors_1 = __importDefault(require("cors"));
 const express_1 = __importDefault(require("express"));
 const database_1 = require("./config/database");
 const productRoutes_1 = __importDefault(require("./routes/productRoutes"));
+const cartRoutes_1 = __importDefault(require("./routes/cartRoutes"));
+const orderRoutes_1 = __importDefault(require("./routes/orderRoutes"));
 const app = (0, express_1.default)();
 const frontendPort = process.env.FRONTEND_PORT ?? "5173";
 app.use((0, cors_1.default)({
@@ -18,6 +20,8 @@ app.get("/health", (_req, res) => {
     res.status(200).json({ status: "ok" });
 });
 app.use("/api/products", productRoutes_1.default);
+app.use("/api/cart", cartRoutes_1.default);
+app.use("/api/orders", orderRoutes_1.default);
 const port = Number(process.env.PORT ?? 3000);
 app.listen(port, async () => {
     console.log(`Server running on port ${port}`);
