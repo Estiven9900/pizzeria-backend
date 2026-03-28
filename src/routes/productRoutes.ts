@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { getAllProducts } from "../services/productService";
+import { getCatalogWithAvailability } from "../services/productService";
 
 const router = Router();
 
 router.get("/", async (_req, res) => {
   try {
-    const products = await getAllProducts();
+    const products = await getCatalogWithAvailability();
     res.json(products);
   } catch (err) {
     console.error("Error fetching products:", err);
