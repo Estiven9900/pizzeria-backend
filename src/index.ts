@@ -2,6 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import { pool } from "./config/database";
+import productRoutes from "./routes/productRoutes";
 
 const app = express();
 
@@ -17,6 +18,8 @@ app.use(express.json());
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
+
+app.use("/api/products", productRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
 
