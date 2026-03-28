@@ -3,6 +3,8 @@ import cors from "cors";
 import express from "express";
 import { pool } from "./config/database";
 import productRoutes from "./routes/productRoutes";
+import cartRoutes from "./routes/cartRoutes";
+import orderRoutes from "./routes/orderRoutes";
 
 const app = express();
 
@@ -20,6 +22,8 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/products", productRoutes);
+app.use("/api/cart", cartRoutes);
+app.use("/api/orders", orderRoutes);
 
 const port = Number(process.env.PORT ?? 3000);
 
