@@ -5,7 +5,7 @@ const productService_1 = require("../services/productService");
 const router = (0, express_1.Router)();
 router.get("/", async (_req, res) => {
     try {
-        const products = await (0, productService_1.getAllProducts)();
+        const products = await (0, productService_1.getCatalogWithAvailability)();
         res.json(products);
     }
     catch (err) {
