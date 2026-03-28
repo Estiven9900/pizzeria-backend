@@ -1,20 +1,32 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getAllProducts = getAllProducts;
+exports.getCatalogWithAvailability = getCatalogWithAvailability;
 const database_1 = require("../config/database");
-async function getAllProducts() {
+async function getCatalogWithAvailability() {
     const { rows } = await database_1.pool.query(`
     SELECT
       p.id    AS pizza_id,
       p.name,
       p.description,
       p.image_url,
+      p.is_active,
       pc.id   AS config_id,
       s.name  AS size,
-      pc.price::text AS price
+      pc.price::text AS price,
+      GREATEST(
+        pc.stock_available - COALESCE(locked.total, 0),
+        0
+      )::int AS effective_stock
     FROM pizzas p
     JOIN product_configs pc ON pc.pizza_id = p.id
     JOIN sizes s            ON s.id = pc.size_id
+    LEFT JOIN (
+      SELECT product_config_id, SUM(quantity)::int AS total
+      FROM product_locks
+      WHERE expires_at > now()
+      GROUP BY product_config_id
+    ) locked ON locked.product_config_id = pc.id
+    WHERE p.is_active = true
     ORDER BY p.id, s.id
   `);
     const map = new Map();
@@ -26,6 +38,7 @@ async function getAllProducts() {
                 name: row.name,
                 description: row.description,
                 image_url: row.image_url,
+                is_active: row.is_active,
                 options: [],
             };
             map.set(row.pizza_id, pizza);
@@ -34,6 +47,8 @@ async function getAllProducts() {
             config_id: row.config_id,
             size: row.size,
             price: row.price,
+            stock_available: row.effective_stock,
+            is_available: row.effective_stock > 0,
         });
     }
     return [...map.values()];
