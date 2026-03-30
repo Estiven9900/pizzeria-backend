@@ -1,7 +1,7 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
-import { pool } from "./config/database";
+import { pool, connectWithRetry } from "./config/database";
 import productRoutes from "./routes/productRoutes";
 import cartRoutes from "./routes/cartRoutes";
 import orderRoutes from "./routes/orderRoutes";
@@ -29,10 +29,5 @@ const port = Number(process.env.PORT ?? 3000);
 
 app.listen(port, async () => {
   console.log(`Server running on port ${port}`);
-  try {
-    await pool.query("SELECT 1");
-    console.log("Conectado a PostgreSQL");
-  } catch (err) {
-    console.error("Error conectando a PostgreSQL:", err);
-  }
+  await connectWithRetry();
 });

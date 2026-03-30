@@ -25,12 +25,6 @@ app.use("/api/orders", orderRoutes_1.default);
 const port = Number(process.env.PORT ?? 3000);
 app.listen(port, async () => {
     console.log(`Server running on port ${port}`);
-    try {
-        await database_1.pool.query("SELECT 1");
-        console.log("Conectado a PostgreSQL");
-    }
-    catch (err) {
-        console.error("Error conectando a PostgreSQL:", err);
-    }
+    await (0, database_1.connectWithRetry)();
 });
 //# sourceMappingURL=index.js.map

@@ -6,7 +6,7 @@ async function createOrder(customer, items) {
     const client = await database_1.pool.connect();
     try {
         await client.query("BEGIN");
-        // 1. Crear la orden con total provisional 0
+        // 1. Crear la orden; el total se calculará después de insertar los items
         const { rows: orderRows } = await client.query(`INSERT INTO orders
          (customer_name, customer_email, delivery_address, reference_notes,
           customer_phone, latitude, longitude)
