@@ -114,7 +114,14 @@ const CATALOG_QUERY = `
 // ─── Función pública ───────────────────────────────────────
 
 export async function getCatalogWithAvailability(): Promise<PizzaCatalogItem[]> {
+  console.log("Query SQL ejecutada:\n", CATALOG_QUERY);
+
   const { rows } = await pool.query<CatalogRow>(CATALOG_QUERY);
+
+  console.log("Filas obtenidas:", rows.length);
+  if (rows.length > 0) {
+    console.log("Primera fila (ejemplo):", JSON.stringify(rows[0], null, 2));
+  }
 
   return rows.map((row) => ({
     id: row.pizza_id,
