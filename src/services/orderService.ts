@@ -1,7 +1,10 @@
 import { pool } from "../config/database";
 import type { OrderStatus } from "../models";
 
-interface OrderInput {
+// ─── Tipos de entrada ──────────────────────────────────────
+
+export interface CheckoutInput {
+  session_id: string;
   customer_name: string;
   customer_email: string;
   delivery_address: string;
@@ -9,12 +12,15 @@ interface OrderInput {
   customer_phone: string;
   latitude: number;
   longitude: number;
+  items: CheckoutItemInput[];
 }
 
-interface OrderItemInput {
+interface CheckoutItemInput {
   product_config_id: string;
   quantity: number;
 }
+
+// ─── Tipos de respuesta ────────────────────────────────────
 
 interface OrderItemResult {
   id: string;
@@ -24,7 +30,7 @@ interface OrderItemResult {
   subtotal: string;
 }
 
-interface OrderResult {
+interface CheckoutResult {
   id: string;
   customer_name: string;
   customer_email: string;
@@ -39,17 +45,23 @@ interface OrderResult {
   items: OrderItemResult[];
 }
 
-export async function createOrder(
-  customer: OrderInput,
-  items: OrderItemInput[],
-): Promise<OrderResult> {
+// ─── Tipo auxiliar para config_ingredients ──────────────────
+
+interface RecipeRow {
+  ingredient_id: string;
+  quantity_required: number;
+}
+
+// ─── Checkout transaccional ────────────────────────────────
+
+export async function checkout(input: CheckoutInput): Promise<CheckoutResult> {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1. Crear la orden; el total se calculará después de insertar los items
-    const { rows: orderRows } = await client.query<Omit<OrderResult, "items">>(
+    // 1. Creación de la orden con datos del cliente
+    const { rows: orderRows } = await client.query<Omit<CheckoutResult, "items">>(
       `INSERT INTO orders
          (customer_name, customer_email, delivery_address, reference_notes,
           customer_phone, latitude, longitude)
@@ -58,21 +70,22 @@ export async function createOrder(
                  reference_notes, customer_phone, latitude, longitude,
                  total_price::text, status, created_at::text`,
       [
-        customer.customer_name,
-        customer.customer_email,
-        customer.delivery_address,
-        customer.reference_notes ?? null,
-        customer.customer_phone,
-        customer.latitude,
-        customer.longitude,
+        input.customer_name,
+        input.customer_email,
+        input.delivery_address,
+        input.reference_notes ?? null,
+        input.customer_phone,
+        input.latitude,
+        input.longitude,
       ],
     );
     const order = orderRows[0]!;
 
-    // 2. Insertar items buscando el precio real en product_configs
+    // 2. Procesamiento de items
     const insertedItems: OrderItemResult[] = [];
 
-    for (const item of items) {
+    for (const item of input.items) {
+      // 2a. Insertar en order_items capturando price_at_purchase desde product_configs
       const { rows: itemRows } = await client.query<OrderItemResult>(
         `INSERT INTO order_items (order_id, product_config_id, quantity, price_at_purchase, subtotal)
          SELECT $1, pc.id, $2, pc.price, pc.price * $2
@@ -87,8 +100,31 @@ export async function createOrder(
           `product_config_id ${item.product_config_id} no encontrado`,
         );
       }
-
       insertedItems.push(itemRows[0]);
+
+      // 2b. RF-01 — Resta de stock por ingrediente
+      const { rows: recipe } = await client.query<RecipeRow>(
+        `SELECT ingredient_id, quantity_required
+         FROM config_ingredients
+         WHERE config_id = $1`,
+        [item.product_config_id],
+      );
+
+      for (const row of recipe) {
+        const { rowCount } = await client.query(
+          `UPDATE ingredients
+           SET stock_quantity = stock_quantity - ($1 * $2)
+           WHERE id = $3
+             AND stock_quantity >= ($1 * $2)`,
+          [row.quantity_required, item.quantity, row.ingredient_id],
+        );
+
+        if (rowCount === 0) {
+          throw new Error(
+            `Stock insuficiente para el ingrediente ${row.ingredient_id}`,
+          );
+        }
+      }
     }
 
     // 3. Actualizar el total de la orden con la suma real de subtotales
@@ -102,11 +138,10 @@ export async function createOrder(
       [order.id],
     );
 
-    // 4. Limpiar locks asociados a los items de esta orden
-    const configIds = items.map((i) => i.product_config_id);
+    // 4. RF-02 — Liberar locks del session_id del cliente
     await client.query(
-      `DELETE FROM product_locks WHERE product_config_id = ANY($1::uuid[])`,
-      [configIds],
+      `DELETE FROM product_locks WHERE session_id = $1`,
+      [input.session_id],
     );
 
     await client.query("COMMIT");

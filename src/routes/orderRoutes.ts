@@ -1,9 +1,11 @@
 import { Router } from "express";
-import { createOrder } from "../services/orderService";
+import { checkout } from "../services/orderService";
+import type { CheckoutInput } from "../services/orderService";
 
 const router = Router();
 
-interface OrderBody {
+interface CheckoutBody {
+  session_id?: string;
   customer_name?: string;
   customer_email?: string;
   delivery_address?: string;
@@ -14,11 +16,12 @@ interface OrderBody {
   items?: { product_config_id: string; quantity: number }[];
 }
 
-router.post("/", async (req, res) => {
+router.post("/checkout", async (req, res) => {
   try {
-    const body = req.body as OrderBody;
+    const body = req.body as CheckoutBody;
 
     if (
+      !body.session_id ||
       !body.customer_name ||
       !body.customer_email ||
       !body.delivery_address ||
@@ -28,7 +31,7 @@ router.post("/", async (req, res) => {
     ) {
       res.status(400).json({
         error:
-          "Se requieren: customer_name, customer_email, delivery_address, customer_phone, latitude, longitude",
+          "Se requieren: session_id, customer_name, customer_email, delivery_address, customer_phone, latitude, longitude",
       });
       return;
     }
@@ -47,29 +50,30 @@ router.post("/", async (req, res) => {
       }
     }
 
-    const order = await createOrder(
-      {
-        customer_name: body.customer_name,
-        customer_email: body.customer_email,
-        delivery_address: body.delivery_address,
-        reference_notes: body.reference_notes ?? undefined,
-        customer_phone: body.customer_phone,
-        latitude: body.latitude,
-        longitude: body.longitude,
-      },
-      body.items,
-    );
+    const input: CheckoutInput = {
+      session_id: body.session_id,
+      customer_name: body.customer_name,
+      customer_email: body.customer_email,
+      delivery_address: body.delivery_address,
+      reference_notes: body.reference_notes ?? undefined,
+      customer_phone: body.customer_phone,
+      latitude: body.latitude,
+      longitude: body.longitude,
+      items: body.items,
+    };
+
+    const order = await checkout(input);
     res.status(201).json(order);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Error desconocido";
 
-    if (message.includes("no encontrado")) {
-      res.status(404).json({ error: message });
+    if (message.includes("no encontrado") || message.includes("Stock insuficiente")) {
+      res.status(400).json({ error: message });
       return;
     }
 
-    console.error("Error creating order:", err);
-    res.status(500).json({ error: "Error al crear la orden" });
+    console.error("Error en checkout:", err);
+    res.status(500).json({ error: "Error al procesar la orden" });
   }
 });
 
