@@ -18,18 +18,14 @@ export interface PizzaCatalogItem {
   sizes: SizeOption[];
 }
 
-// ─── Row devuelta por la query ─────────────────────────────
+// ─── Row devuelta por la query (una fila por pizza) ────────
 
 interface CatalogRow {
   pizza_id: string;
   pizza_name: string;
   description: string | null;
   image_url: string | null;
-  product_config_id: string;
-  size_name: string;
-  price: number;
-  sku: string | null;
-  is_available: boolean;
+  sizes: SizeOption[];
 }
 
 // ─── Query principal con CTEs ──────────────────────────────
@@ -71,11 +67,11 @@ const CATALOG_QUERY = `
     -- CTE 4: Una product_config es available solo si TODOS sus
     --         ingredientes tienen stock >= quantity_required.
     --         Si la config no tiene ingredientes registrados, se
-    --         asume disponible (catálogo sin receta aún).
+    --         considera NO disponible (receta pendiente de definir).
     SELECT
       pc.id AS product_config_id,
       CASE
-        WHEN COUNT(ci.ingredient_id) = 0 THEN true
+        WHEN COUNT(ci.ingredient_id) = 0 THEN false
         WHEN bool_and(
                es.available >= ci.quantity_required
              ) THEN true
@@ -87,23 +83,32 @@ const CATALOG_QUERY = `
     GROUP BY pc.id
   )
 
-  -- Query final: une todo y devuelve el catálogo plano.
+  -- Query final: LEFT JOINs para incluir pizzas sin configs aún.
+  -- GROUP BY pizzas.id devuelve una fila por pizza con sus configs en JSON.
   SELECT
     p.id          AS pizza_id,
     p.name        AS pizza_name,
     p.description,
     p.image_url,
-    pc.id         AS product_config_id,
-    s.name        AS size_name,
-    pc.price,
-    pc.sku,
-    COALESCE(ca.is_available, false) AS is_available
+    COALESCE(
+      JSON_AGG(
+        JSON_BUILD_OBJECT(
+          'product_config_id', pc.id,
+          'size',              s.name,
+          'price',             pc.price,
+          'sku',               pc.sku,
+          'is_available',      COALESCE(ca.is_available, false)
+        ) ORDER BY s.id
+      ) FILTER (WHERE pc.id IS NOT NULL),
+      JSON_BUILD_ARRAY()
+    ) AS sizes
   FROM pizzas p
-  JOIN product_configs     pc ON pc.pizza_id = p.id
-  JOIN sizes               s  ON s.id = pc.size_id
+  LEFT JOIN product_configs     pc ON pc.pizza_id   = p.id
+  LEFT JOIN sizes               s  ON s.id           = pc.size_id
   LEFT JOIN config_availability ca ON ca.product_config_id = pc.id
   WHERE p.is_active = true
-  ORDER BY p.name, s.id;
+  GROUP BY p.id, p.name, p.description, p.image_url
+  ORDER BY p.name;
 `;
 
 // ─── Función pública ───────────────────────────────────────
@@ -111,30 +116,11 @@ const CATALOG_QUERY = `
 export async function getCatalogWithAvailability(): Promise<PizzaCatalogItem[]> {
   const { rows } = await pool.query<CatalogRow>(CATALOG_QUERY);
 
-  const map = new Map<string, PizzaCatalogItem>();
-
-  for (const row of rows) {
-    let pizza = map.get(row.pizza_id);
-
-    if (!pizza) {
-      pizza = {
-        id: row.pizza_id,
-        name: row.pizza_name,
-        description: row.description,
-        image_url: row.image_url,
-        sizes: [],
-      };
-      map.set(row.pizza_id, pizza);
-    }
-
-    pizza.sizes.push({
-      product_config_id: row.product_config_id,
-      size: row.size_name,
-      price: row.price,
-      sku: row.sku,
-      is_available: row.is_available,
-    });
-  }
-
-  return [...map.values()];
+  return rows.map((row) => ({
+    id: row.pizza_id,
+    name: row.pizza_name,
+    description: row.description,
+    image_url: row.image_url,
+    sizes: row.sizes,
+  }));
 }
