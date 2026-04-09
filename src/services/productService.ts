@@ -81,34 +81,44 @@ const CATALOG_QUERY = `
     LEFT JOIN config_ingredients ci ON ci.config_id        = pc.id
     LEFT JOIN effective_stock    es ON es.ingredient_id    = ci.ingredient_id
     GROUP BY pc.id
+  ),
+
+  sizes_data AS (
+    -- CTE 5: Construye el objeto JSON de cada tamaño/config por pizza.
+    --         Separar JSON_BUILD_OBJECT aquí permite hacer
+    --         FILTER (WHERE sizes_data IS NOT NULL) sobre el alias real
+    --         en lugar de filtrar por pc.id (campo de JOIN).
+    SELECT
+      pc.pizza_id,
+      s.id AS size_id,
+      JSON_BUILD_OBJECT(
+        'product_config_id', pc.id,
+        'size',              s.name,
+        'price',             pc.price,
+        'sku',               pc.sku,
+        'is_available',      COALESCE(ca.is_available, false)
+      ) AS sizes_data
+    FROM product_configs     pc
+    LEFT JOIN sizes               s  ON s.id                 = pc.size_id
+    LEFT JOIN config_availability ca ON ca.product_config_id = pc.id
   )
 
   -- Consulta final: una fila por pizza con sus opciones de tamaño serializadas en JSON.
-  -- LEFT JOINs en toda la cadena garantizan que:
-  --   · Una pizza sin product_configs aparece con sizes = [].
-  --   · Una pizza cuyas configs no tienen tamaño asociado sigue apareciendo.
-  --   · FILTER (WHERE pc.id IS NOT NULL) evita agregar filas NULL al array JSON.
+  -- LEFT JOIN con sizes_data garantiza que pizzas sin configs aparezcan con sizes = [].
+  -- FILTER (WHERE sd.sizes_data IS NOT NULL) opera sobre el valor JSON real,
+  -- no sobre un campo de JOIN, evitando estructuras corruptas o errores silenciosos.
   SELECT
     p.id          AS pizza_id,
     p.name        AS pizza_name,
     p.description,
     p.image_url,
     COALESCE(
-      JSON_AGG(
-        JSON_BUILD_OBJECT(
-          'product_config_id', pc.id,
-          'size',              s.name,
-          'price',             pc.price,
-          'sku',               pc.sku,
-          'is_available',      COALESCE(ca.is_available, false)
-        ) ORDER BY s.id
-      ) FILTER (WHERE pc.id IS NOT NULL),
-      JSON_BUILD_ARRAY()
+      JSON_AGG(sd.sizes_data ORDER BY sd.size_id)
+      FILTER (WHERE sd.sizes_data IS NOT NULL),
+      '[]'::json
     ) AS sizes
   FROM pizzas p
-  LEFT JOIN product_configs     pc ON pc.pizza_id          = p.id
-  LEFT JOIN sizes               s  ON s.id                 = pc.size_id
-  LEFT JOIN config_availability ca ON ca.product_config_id = pc.id
+  LEFT JOIN sizes_data sd ON sd.pizza_id = p.id
   WHERE p.is_active = true
   GROUP BY p.id, p.name, p.description, p.image_url
   ORDER BY p.name;
