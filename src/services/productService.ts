@@ -32,7 +32,7 @@ interface CatalogRow {
 
 const CATALOG_QUERY = `
   WITH active_locks AS (
-    -- CTE 1: Locks vigentes agrupados por product_config_id
+    -- CTE 1: Suma de unidades bloqueadas por product_config_id (solo locks vigentes).
     SELECT
       pl.product_config_id,
       SUM(pl.quantity)::int AS locked_qty
@@ -42,9 +42,9 @@ const CATALOG_QUERY = `
   ),
 
   ingredient_demand AS (
-    -- CTE 2: Demanda de cada ingrediente causada por locks activos.
-    --         Para cada config bloqueada, multiplicamos locked_qty
-    --         por la quantity_required de la receta.
+    -- CTE 2: Demanda total de cada ingrediente causada por locks activos.
+    --         LEFT JOIN con active_locks → configs sin locks activos aportan 0 de demanda
+    --         (COALESCE convierte el NULL del LEFT JOIN en 0).
     SELECT
       ci.ingredient_id,
       SUM(ci.quantity_required * COALESCE(al.locked_qty, 0)) AS total_reserved
@@ -54,37 +54,40 @@ const CATALOG_QUERY = `
   ),
 
   effective_stock AS (
-    -- CTE 3: Stock real de cada ingrediente después de descontar la
-    --         demanda reservada por locks.
+    -- CTE 3: Stock disponible de cada ingrediente descontando la demanda reservada.
+    --         LEFT JOIN con ingredient_demand → ingredientes sin demanda activa
+    --         conservan su stock completo (COALESCE convierte NULL en 0).
     SELECT
       i.id AS ingredient_id,
-      GREATEST(i.stock_quantity - COALESCE(id.total_reserved, 0), 0) AS available
+      GREATEST(i.stock_quantity - COALESCE(demand.total_reserved, 0), 0) AS available
     FROM ingredients i
-    LEFT JOIN ingredient_demand id ON id.ingredient_id = i.id
+    LEFT JOIN ingredient_demand demand ON demand.ingredient_id = i.id
   ),
 
   config_availability AS (
-    -- CTE 4: Una product_config es available solo si TODOS sus
-    --         ingredientes tienen stock >= quantity_required.
-    --         Si la config no tiene ingredientes registrados, se
-    --         considera NO disponible (receta pendiente de definir).
+    -- CTE 4: Disponibilidad de cada product_config.
+    --         LEFT JOIN con config_ingredients → configs sin ingredientes registrados
+    --         caen en COUNT = 0 → is_available = false (receta incompleta).
+    --         LEFT JOIN con effective_stock → verifica que TODOS los ingredientes
+    --         tengan stock >= quantity_required (bool_and).
     SELECT
       pc.id AS product_config_id,
       CASE
-        WHEN COUNT(ci.ingredient_id) = 0 THEN false
-        WHEN bool_and(
-               es.available >= ci.quantity_required
-             ) THEN true
+        WHEN COUNT(ci.ingredient_id) = 0 THEN false   -- Sin ingredientes → no disponible
+        WHEN bool_and(es.available >= ci.quantity_required) THEN true
         ELSE false
       END AS is_available
     FROM product_configs pc
-    LEFT JOIN config_ingredients ci ON ci.config_id = pc.id
-    LEFT JOIN effective_stock    es ON es.ingredient_id = ci.ingredient_id
+    LEFT JOIN config_ingredients ci ON ci.config_id        = pc.id
+    LEFT JOIN effective_stock    es ON es.ingredient_id    = ci.ingredient_id
     GROUP BY pc.id
   )
 
-  -- Query final: LEFT JOINs para incluir pizzas sin configs aún.
-  -- GROUP BY pizzas.id devuelve una fila por pizza con sus configs en JSON.
+  -- Consulta final: una fila por pizza con sus opciones de tamaño serializadas en JSON.
+  -- LEFT JOINs en toda la cadena garantizan que:
+  --   · Una pizza sin product_configs aparece con sizes = [].
+  --   · Una pizza cuyas configs no tienen tamaño asociado sigue apareciendo.
+  --   · FILTER (WHERE pc.id IS NOT NULL) evita agregar filas NULL al array JSON.
   SELECT
     p.id          AS pizza_id,
     p.name        AS pizza_name,
@@ -103,8 +106,8 @@ const CATALOG_QUERY = `
       JSON_BUILD_ARRAY()
     ) AS sizes
   FROM pizzas p
-  LEFT JOIN product_configs     pc ON pc.pizza_id   = p.id
-  LEFT JOIN sizes               s  ON s.id           = pc.size_id
+  LEFT JOIN product_configs     pc ON pc.pizza_id          = p.id
+  LEFT JOIN sizes               s  ON s.id                 = pc.size_id
   LEFT JOIN config_availability ca ON ca.product_config_id = pc.id
   WHERE p.is_active = true
   GROUP BY p.id, p.name, p.description, p.image_url
@@ -119,9 +122,7 @@ export async function getCatalogWithAvailability(): Promise<PizzaCatalogItem[]> 
   const { rows } = await pool.query<CatalogRow>(CATALOG_QUERY);
 
   console.log("Filas obtenidas:", rows.length);
-  if (rows.length > 0) {
-    console.log("Primera fila (ejemplo):", JSON.stringify(rows[0], null, 2));
-  }
+  console.log("Resultados brutos de la DB:", JSON.stringify(rows, null, 2));
 
   return rows.map((row) => ({
     id: row.pizza_id,
